@@ -1,0 +1,834 @@
+---
+title: "DATA 608 Story 1: Infrastructure Investment & Jobs Act Funding Allocation | Candace Grant" 
+
+output:
+  html_document:
+    toc: true
+    toc_depth: '2'
+    df_print: paged
+  word_document:
+    toc: true
+    toc_depth: '2'
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    fig_caption: true
+    fig_width: 10
+    fig_height: 6
+    latex_engine: xelatex
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{xcolor}
+- \usepackage{sectsty}
+- \usepackage{float}
+- \allsectionsfont{\bfseries\color[HTML]{1565C0}}
+- \subsectionfont{\bfseries\color[HTML]{333333}}
+- \usepackage[margin=1in]{geometry}
+- \floatplacement{figure}{H}
+---
+
+<style>
+.title { margin-bottom: 60px; }
+</style>
+
+
+```{css, echo=FALSE}
+h1.title {
+  font-size: 20px;
+}
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 10,
+  fig.height = 5.5,
+  fig.align = "center"
+)
+
+```
+
+
+```{r load-libraries, include=FALSE}
+# ---- Load Required Libraries ----
+
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(maps)
+library(stringr)
+library(knitr)
+library(gridExtra)
+library(ggtext)
+library(mapproj)   # <-- add this line right after library(maps)
+```
+
+```{r load-data, include = FALSE}
+# ---- Load Raw Datasets ----
+funding_raw  <- read_excel("Dataset_Funding.xlsx")
+pop_raw      <- read_excel("Dataset_Population.xlsx")
+votes_raw    <- read_excel("Votes_2020.xlsx")
+```
+
+```{r inspect-data, include = FALSE}
+cat("Funding dataset:", dim(funding_raw), "\n")
+cat("Population dataset:", dim(pop_raw), "\n")
+cat("Votes dataset:", dim(votes_raw), "\n")
+```
+
+
+
+```{r clean-funding, echo = FALSE, include=FALSE}
+# ---- Clean Funding Dataset ----
+# Rename Jurisdiction to 'State' and standardize to title case
+funding <- funding_raw %>%
+  rename(State = Jurisdiction) %>%
+  mutate(State = str_to_title(State)) %>%
+  # Fix the misspelling in the original data
+  mutate(State = ifelse(State == "Deleware", "Delaware", State)) %>%
+  # Filter to 50 states + DC (remove territories and tribal)
+  filter(!State %in% c("American Samoa", "Guam",
+                        "Northern Mariana Islands",
+                        "Puerto Rico", "Us Virgin Islands",
+                        "Tribal Communities"))
+
+cat("Funding: Cleaned to", nrow(funding), "jurisdictions\n")
+head(funding, 5)
+```
+
+
+
+```{r clean-population, echo = FALSE, include=FALSE}
+# ---- Clean Population Dataset ----
+# Filter to state-level summaries only (SUMLEV == 40)
+# Rename NAME to 'State' and select relevant columns
+population <- pop_raw %>%
+  filter(SUMLEV == 40) %>%
+  rename(State = NAME) %>%
+  select(State, Population = POPESTIMATE2020) %>%
+  # Remove Puerto Rico to align with funding (50 states + DC)
+  filter(State != "Puerto Rico")
+
+cat("Population: Cleaned to", nrow(population), "jurisdictions\n")
+head(population, 5)
+```
+
+
+```{r clean-votes, echo = FALSE, include=FALSE}
+# ---- Clean Votes Dataset ----
+# The votes dataset has a multi-row header; extract and restructure
+votes_clean <- votes_raw %>%
+  slice(3:53) %>%  # Rows 3-53 contain the 50 states + DC
+  setNames(c("State_Abbr", "Biden_EV", "Trump_EV",
+             "Biden_Popular", "Trump_Popular",
+             "Others_Popular", "Total_Vote")) %>%
+  mutate(
+    # Remove asterisks from ME* and NE*
+    State_Abbr = str_remove(State_Abbr, "\\*"),
+    Biden_EV = as.numeric(Biden_EV),
+    Trump_EV = as.numeric(Trump_EV),
+    Biden_Popular = as.numeric(Biden_Popular),
+    Trump_Popular = as.numeric(Trump_Popular),
+    Total_Vote = as.numeric(Total_Vote)
+  )
+```
+
+
+```{r state-mapping, echo = FALSE, include=FALSE}
+# ---- Create State Abbreviation to Full Name Mapping ----
+state_lookup <- data.frame(
+  State_Abbr = c("AL","AK","AZ","AR","CA","CO","CT","DE","DC","FL",
+                 "GA","HI","ID","IL","IN","IA","KS","KY","LA","ME",
+                 "MD","MA","MI","MN","MS","MO","MT","NE","NV","NH",
+                 "NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI",
+                 "SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"),
+  State = c("Alabama","Alaska","Arizona","Arkansas","California",
+            "Colorado","Connecticut","Delaware",
+            "District Of Columbia","Florida",
+            "Georgia","Hawaii","Idaho","Illinois","Indiana",
+            "Iowa","Kansas","Kentucky","Louisiana","Maine",
+            "Maryland","Massachusetts","Michigan","Minnesota",
+            "Mississippi","Missouri","Montana","Nebraska","Nevada",
+            "New Hampshire","New Jersey","New Mexico","New York",
+            "North Carolina","North Dakota","Ohio","Oklahoma",
+            "Oregon","Pennsylvania","Rhode Island",
+            "South Carolina","South Dakota","Tennessee","Texas",
+            "Utah","Vermont","Virginia","Washington",
+            "West Virginia","Wisconsin","Wyoming"),
+  stringsAsFactors = FALSE
+)
+
+# Join to get full state names and determine winner
+votes <- votes_clean %>%
+  left_join(state_lookup, by = "State_Abbr") %>%
+  mutate(
+    Winner = case_when(
+      !is.na(Biden_EV) & (is.na(Trump_EV) | Biden_EV > 0) ~ "Biden",
+      !is.na(Trump_EV) & (is.na(Biden_EV) | Trump_EV > 0) ~ "Trump",
+      TRUE ~ NA_character_
+    ),
+    Party = ifelse(Winner == "Biden", "Blue", "Red")
+  ) %>%
+  select(State, State_Abbr, Biden_EV, Trump_EV, Winner, Party,
+         Biden_Popular, Trump_Popular, Total_Vote)
+
+head(votes, 5)
+```
+
+
+
+```{r merge-master, echo = FALSE, include=FALSE}
+# ---- Merge All Three Datasets ----
+# Fix DC name mismatch between funding ("District Of Columbia")
+# and population ("District of Columbia")
+funding <- funding %>%
+  mutate(State = ifelse(State == "District Of Columbia",
+                        "District of Columbia", State))
+
+votes <- votes %>%
+  mutate(State = ifelse(State == "District Of Columbia",
+                        "District of Columbia", State))
+
+# Merge funding + population + votes
+master <- funding %>%
+  inner_join(population, by = "State") %>%
+  inner_join(votes, by = "State") %>%
+  mutate(
+    # Convert funding from billions to dollars
+    Funding_Dollars = Total_funding * 1e9,
+    # Calculate per-capita funding
+    Funding_Per_Capita = Funding_Dollars / Population
+  )
+
+cat("Master dataset:", nrow(master), "rows x", ncol(master), "cols\n")
+```
+
+
+
+```{r preview-master, echo = FALSE, include=FALSE}
+master %>%
+  select(State, Total_funding, Population, Party,
+         Funding_Per_Capita) %>%
+  arrange(desc(Total_funding)) %>%
+  head(10) %>%
+  kable(caption = "Top 10 States by Total IIJA Funding (Billions $)",
+        digits = 2, format.args = list(big.mark = ","))
+```
+
+
+
+```{r q2-mirror-chart, fig.width=10, fig.height=7, echo=FALSE}
+wyoming_row <- data.frame(
+  State              = "Wyoming",
+  Total_funding      = 0.391,
+  Population         = 576851,
+  State_Abbr         = "WY",
+  Biden_EV           = 0,
+  Trump_EV           = 3,
+  Winner             = "Trump",
+  Party              = "Red",
+  Biden_Popular      = 73491,
+  Trump_Popular      = 193559,
+  Total_Vote         = 267050,
+  Funding_Dollars    = 391000000,
+  Funding_Per_Capita = 678
+)
+
+master <- bind_rows(master, wyoming_row)
+top30_pop <- master %>%
+  arrange(desc(Population)) %>%
+  slice(1:30) %>%
+  mutate(Pop_Rank = row_number())
+
+top30_fund <- master %>%
+  arrange(desc(Total_funding)) %>%
+  slice(1:30) %>%
+  mutate(Fund_Rank = row_number())
+
+top30_comparison <- top30_pop %>%
+  select(State, Population, Pop_Rank) %>%
+  full_join(
+    top30_fund %>% select(State, Total_funding, Fund_Rank),
+    by = "State"
+  ) %>%
+  mutate(
+    In_Both = ifelse(!is.na(Pop_Rank) & !is.na(Fund_Rank),
+                     "In Both Top 20", "In One List Only")
+  )
+
+# ── Separate data with correct ordering for each panel ──
+pop_data <- top30_comparison %>%
+  filter(!is.na(Pop_Rank)) %>%
+  arrange(desc(Population)) %>%
+  mutate(State_Label = factor(State, levels = rev(State)))
+
+fund_data <- top30_comparison %>%
+  filter(!is.na(Fund_Rank)) %>%
+  arrange(desc(Total_funding)) %>%
+  mutate(State_Label = factor(State, levels = rev(State)))
+
+# ── Left panel: Population ──
+p1 <- ggplot(pop_data,
+             aes(x = Population / 1e6, y = State_Label,
+                 fill = Population / 1e6)) +
+  geom_col(width = 0.7,
+           color = ifelse(pop_data$In_Both == "In One List Only",
+                          "#2A9D8F", NA),
+           linewidth = ifelse(pop_data$In_Both == "In One List Only",
+                              1.2, 0)) +
+  scale_fill_gradient(low = "#C9D6E5", high = "#1B2A4A",
+                      guide = "none") +
+  scale_x_continuous(labels = function(x) paste0(x, "M")) +
+  labs(x = "Population (Millions)", y = NULL,
+       title = "Top 30 by Population") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "plain", size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "grey")
+  )
+
+# ── Right panel: Funding ──
+p2 <- ggplot(fund_data,
+             aes(x = Total_funding, y = State_Label,
+                 fill = Total_funding)) +
+  geom_col(width = 0.7,
+           color = ifelse(fund_data$In_Both == "In One List Only",
+                          "#1B2A4A", NA),
+           linewidth = ifelse(fund_data$In_Both == "In One List Only",
+                              1.2, 0)) +
+  scale_fill_gradient(low = "#D3E8E5", high = "#204204",
+                      guide = "none") +
+  scale_x_continuous(labels = dollar_format(suffix = "B")) +
+  labs(x = "Funding ($ Billions)", y = NULL,
+       title = "Top 30 by Funding") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "plain", size = 12),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(color = "grey")
+  )
+
+grid.arrange(
+  p1, p2, ncol = 2,
+  top = grid::textGrob(
+    "The Most Populated States Get the Biggest\nFunding — With Exceptions",
+    gp = grid::gpar(
+      fontsize = 30,
+      fontface = "bold",
+      fontfamily = "Helvetica",
+       col = "black")))
+```
+<br><br>
+
+
+
+
+
+
+```{r outlier-analysis-top30, fig.width=10, fig.height=7, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(scales)
+
+wyoming_row <- data.frame(
+  State              = "Wyoming",
+  Total_funding      = 0.391,
+  Population         = 576851,
+  State_Abbr         = "WY",
+  Biden_EV           = 0,
+  Trump_EV           = 3,
+  Winner             = "Trump",
+  Party              = "Red",
+  Biden_Popular      = 73491,
+  Trump_Popular      = 193559,
+  Total_Vote         = 267050,
+  Funding_Dollars    = 391000000,
+  Funding_Per_Capita = 678
+)
+
+master <- bind_rows(master, wyoming_row)
+
+# ── Identify the exceptions ──
+top30_pop <- master %>%
+  arrange(desc(Population)) %>%
+  slice(1:30) %>%
+  pull(State)
+
+top30_fund <- master %>%
+  arrange(desc(Total_funding)) %>%
+  slice(1:30) %>%
+  pull(State)
+
+pop_only  <- setdiff(top30_pop, top30_fund)   # Big population, not top 30 funded
+fund_only <- setdiff(top30_fund, top30_pop)    # Top 30 funded, not big population
+
+
+# ── Totals for percentage calculations ──
+total_us_pop     <- sum(master$Population)
+total_us_funding <- sum(master$Total_funding)
+
+# ── Build the outlier dataset ──
+outlier_df <- master %>%
+  filter(State %in% c(pop_only, fund_only)) %>%
+  mutate(
+    Pct_Pop       = (Population / total_us_pop) * 100,
+    Pct_Funding   = (Total_funding / total_us_funding) * 100,
+    Gap_pp        = Pct_Funding - Pct_Pop,
+    Per_Capita    = (Total_funding * 1e9) / Population,
+    Ratio         = Pct_Funding / Pct_Pop,
+    Group = case_when(
+      State %in% pop_only  ~ "Top 30 Population, Not Funding",
+      State %in% fund_only ~ "Top 30 Funding, Not Population"
+    )
+  ) %>%
+  arrange(Gap_pp) %>%
+  mutate(State = factor(State, levels = State))
+
+
+# ── Dumbbell Plot ──
+ggplot(outlier_df, aes(y = State)) +
+
+ 
+
+  # Connecting line
+  geom_segment(aes(x = Pct_Pop, xend = Pct_Funding,
+                   y = State, yend = State),
+               color = "grey40", linewidth = 1.5) +
+
+  # Population dot
+  geom_point(aes(x = Pct_Pop), size = 3, color = "#1B2A4A") +
+
+  # Funding dot
+  geom_point(aes(x = Pct_Funding), size = 3, color = "#0D9488") +
+
+  # Gap label above the line
+  geom_text(aes(x = (Pct_Pop + Pct_Funding) / 2,
+                label = paste0(ifelse(Gap_pp > 0, "+", ""),
+                          
+                               round(Ratio, 2), "x")),
+            vjust = -1.3, size = 3.2, fontface = "bold",
+            color = "grey30") +
+
+ 
+
+  scale_fill_manual(values = c(
+    "Top 30 Population, Not Funding" = "#1B2A4A",
+    "Top 30 Funding, Not Population" = "#0D9488"
+  ), guide = "none") +
+
+  scale_x_continuous(labels = function(x) paste0(x, "%"),
+                     expand = expansion(mult = c(0.15, 0.15))) +
+
+ labs(
+    title = "Where Funding Doesn't Follow Population\n — The Exceptions Tell A Story",
+    subtitle = paste0(
+      "<span style='color:#1B2A4A; font-size:18pt;'>\u25CF</span>",
+      " Population Share          ",
+      "<span style='color:#0D9488; font-size:18pt;'>\u25CF</span>",
+      " Funding Share          "),
+    x = "State's Share of U.S. Population and Federal Funding (%)",
+    y = NULL,
+    caption = paste0(
+      "Ratio interpretation: 1.0x = funding matches population share  |  ",
+      ">1.0x = overfunded  |  <1.0x = underfunded")
+  ) +
+  
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 30,
+                                    color = "#1B2A4A"),
+    plot.subtitle    = element_markdown(size = 12, color = "gray30",
+                                        margin = margin(b = 25)),
+    plot.caption     = element_text(size = 11, color = "gray30"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text.y = element_text(face = "bold", size = 11,
+                                color = "#1B2A4A"),
+    
+    panel.grid.major.x = element_blank(),
+    axis.line.x = element_line(color = "grey10", linewidth = 0.5),
+    axis.line.y = element_line(color = "grey30", linewidth = 0.5),
+    axis.text.x = element_text(color = "grey20", size = 11),
+    axis.title.x = element_text(margin = margin(t = 15), color = "grey20"),
+  )
+
+ggsave("outlier_gap_top30.png", width = 10, height = 7, dpi = 300)
+```
+
+**The ratio compares each state's share of federal funding to its share of the U.S. population. A ratio of 1.0x means a state receives funding proportional to its population size. Above 1.0x indicates the state receives more than its proportional share; below 1.0x means it receives less."**
+
+<br>
+<br>
+<br>
+
+```{r per-capita-outliers, fig.width=10, fig.height=7, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+library(scales)
+library(ggtext)
+
+
+wyoming_row <- data.frame(
+  State              = "Wyoming",
+  Total_funding      = 0.391,
+  Population         = 576851,
+  State_Abbr         = "WY",
+  Biden_EV           = 0,
+  Trump_EV           = 3,
+  Winner             = "Trump",
+  Party              = "Red",
+  Biden_Popular      = 73491,
+  Trump_Popular      = 193559,
+  Total_Vote         = 267050,
+  Funding_Dollars    = 391000000,
+  Funding_Per_Capita = 678
+)
+
+master <- bind_rows(master, wyoming_row)
+# ── Identify the exceptions ──
+top30_pop <- master %>%
+  arrange(desc(Population)) %>%
+  slice(1:30) %>%
+  pull(State)
+
+top30_fund <- master %>%
+  arrange(desc(Total_funding)) %>%
+  slice(1:30) %>%
+  pull(State)
+
+pop_only  <- setdiff(top30_pop, top30_fund)
+fund_only <- setdiff(top30_fund, top30_pop)
+
+# ── National mean per capita ──
+national_per_capita <- sum(master$Total_funding * 1e9) / sum(master$Population)
+
+# ── Build the outlier dataset ──
+outlier_df <- master %>%
+  filter(State %in% c(pop_only, fund_only)) %>%
+  mutate(
+    Per_Capita = (Total_funding * 1e9) / Population,
+    Diff_from_Mean = Per_Capita - national_per_capita,
+    Group = case_when(
+      State %in% pop_only  ~ "Top 30 Population, Not Funding",
+      State %in% fund_only ~ "Top 30 Funding, Not Population"
+    )
+  ) %>%
+  arrange(Per_Capita) %>%
+  mutate(State = factor(State, levels = State))
+
+# ── Lollipop / Dot Plot with National Mean Line ──
+ggplot(outlier_df, aes(x = Per_Capita, y = State)) +
+
+  # Shading by group
+  geom_rect(
+    aes(fill = Group),
+    xmin = -Inf, xmax = Inf,
+    ymin = as.numeric(outlier_df$State) - 0.4,
+    ymax = as.numeric(outlier_df$State) + 0.4,
+    alpha = 0.08
+  ) +
+
+  # National mean reference line
+  geom_vline(
+    xintercept = national_per_capita,
+    linetype   = "solid",
+    color      = "#D97706",
+    linewidth  = .5
+  ) +
+
+  # Label for the mean line
+  annotate("text",
+           x     = national_per_capita,
+           y     = Inf,
+           label = paste0("National Mean: $",
+                          comma(round(national_per_capita))),
+           hjust = -0.05, vjust = 1.5,
+           size  = 4, fontface = "bold",
+           color = "#D97706") +
+
+
+
+  # Per capita dot
+  geom_point(aes(color = Group), size = 2.5) +
+
+  # Per capita label
+  geom_text(aes(label = paste0("$", comma(round(Per_Capita)))),
+            hjust = ifelse(outlier_df$Per_Capita > national_per_capita, -0.3, 1.3),
+            size  = 4, fontface = "bold", color = "grey30") +
+
+  scale_color_manual(values = c(
+    "Top 30 Population, Not Funding" = "#1B2A4A",
+    "Top 30 Funding, Not Population" = "#1B2A4A"
+  ), guide = "none") +
+
+  scale_fill_manual(values = c(
+    "Top 30 Population, Not Funding" = "#1B2A4A",
+    "Top 30 Funding, Not Population" = "#1B2A4A"
+  ), guide = "none") +
+
+  scale_x_continuous(labels = dollar_format(), 
+                     expand = expansion(mult = c(0.15, 0.15))) +
+
+  labs(
+    title = "Alaska tops the list of per capita funding-\n even though it’s not in the top 30 for population",
+    x = "Federal Funding Per Capita ($)",
+    y = NULL,
+    
+  ) +
+
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title         = element_text(face = "bold", size = 26, color = "#1B2A4A"),
+    plot.subtitle      = element_markdown(size = 12, color = "gray30", margin = margin(b = 25)),
+    plot.caption       = element_text(size = 11, color = "gray40"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text.y        = element_text(face = "bold", size = 11, color = "#1B2A4A"),
+    plot.margin        = margin(15, 30, 10, 10),
+    panel.grid.major.x = element_blank(),
+  )
+
+ggsave("outlier_percapita_top30.png", width = 10, height = 7, dpi = 300)
+```
+<br>
+<br>
+<br>
+
+```{r map-percapita-funding, fig.width=14, fig.height=9, echo=FALSE, warning=FALSE, message=FALSE}
+
+master <- bind_rows(master, wyoming_row)
+states_map <- map_data("state")
+
+map_df <- master %>%
+  mutate(
+    region = tolower(State),
+    Per_Capita = (Total_funding * 1e9) / Population,
+    PC_Norm = (Per_Capita - min(Per_Capita)) / 
+               (max(Per_Capita) - min(Per_Capita))
+  )
+
+national_per_capita <- sum(master$Total_funding * 1e9) / sum(master$Population)
+
+map_merged <- states_map %>%
+  left_join(map_df, by = "region")
+
+state_centers <- map_merged %>%
+  group_by(region, State_Abbr) %>%
+  summarise(
+    long = mean(range(long)),
+    lat = mean(range(lat)),
+    .groups = "drop"
+  )
+
+ggplot(map_merged, aes(x = long, y = lat, group = group,
+                        fill = Party, alpha = PC_Norm)) +
+  geom_polygon(color = "white", linewidth = 0.3) +
+  geom_text(data = state_centers,
+            aes(x = long, y = lat, label = State_Abbr, group = NULL),
+            size = 2, color = "black", fontface = "bold",
+            inherit.aes = FALSE) +
+  coord_map("albers", lat0 = 29.5, lat1 = 45.5) +
+  scale_fill_manual(values = c("Blue" = "#2166AC",
+                                "Red" = "#B2182B"),
+                    name = "2020 Vote") +
+  scale_alpha_continuous(range = c(0.3, 1)) +
+  labs(
+    title = "How is Per Capita Funding Spread Accross \nThe United States?",
+    subtitle = paste0(
+      "Color = party alignment  |  Darker = higher per capita funding  |  ",
+      "National mean: $", comma(round(national_per_capita)), " per person"),
+    caption = "Source: Federal IIJA Funding & 2020 Election Data"
+  ) +
+  theme_void(base_size = 12) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 36,
+                                color = "#1B2A4A", hjust = 0),
+    plot.subtitle = element_text(size = 11, color = "gray40",
+                                 hjust = 0.5, margin = margin(b = 15)),
+    plot.caption  = element_text(size = 9, color = "gray50",
+                                 margin = margin(t = 20)),
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.title = element_text(size = 10, face = "bold"),
+    legend.text  = element_text(size = 9),
+    plot.margin = margin(10, 10, 10, 10)
+  ) +
+  guides(alpha = "none")
+
+ggsave("map_percapita_funding.png", width = 14, height = 9, dpi = 300)
+
+```
+**What the Map Reveals**: 
+
+- The map makes the distribution of per capita funding immediately visible. The darkest shading on the entire map belongs to Red states
+— Montana and North Dakota stand out as the clear leaders in per capita funding, with South Dakota and West Virginia also showing notably deeper color intensity. Across the rest of the map, Red states in the South and central     U.S. display a broad spread of moderate shading, indicating consistent mid-range per capita funding. 
+- By contrast, Blue states — concentrated along the coasts — are predominantly light in color, with the exception of Vermont and Maine in the Northeast. 
+- Large Blue states like California, New York, and Illinois appear notably pale, meaning their per capita funding falls well below smaller Red states despite receiving large total dollar amounts. 
+
+<br>
+<br>
+
+```{r party-percapita-stacked, fig.width=12, fig.height=16, echo=FALSE, warning=FALSE, message=FALSE}
+library(ggtext)
+library(tidytext)
+wyoming_row <- data.frame(
+  State              = "Wyoming",
+  Total_funding      = 0.391,
+  Population         = 576851,
+  State_Abbr         = "WY",
+  Biden_EV           = 0,
+  Trump_EV           = 3,
+  Winner             = "Trump",
+  Party              = "Red",
+  Biden_Popular      = 73491,
+  Trump_Popular      = 193559,
+  Total_Vote         = 267050,
+  Funding_Dollars    = 391000000,
+  Funding_Per_Capita = 678
+)
+
+master <- bind_rows(master, wyoming_row)
+party_df <- master %>%
+  mutate(
+    Per_Capita = (Total_funding * 1e9) / Population,
+    Party_Label = ifelse(Party == "Blue", "Blue States", "Red States")
+  ) %>%
+  arrange(Party, Per_Capita) %>%
+  mutate(State = reorder_within(State, Per_Capita, Party_Label))
+
+national_mean <- mean(party_df$Per_Capita)
+
+ggplot(party_df, aes(x = State, y = Per_Capita, fill = Party)) +
+  geom_col(width = 0.7) +
+
+  # National mean reference line
+  geom_hline(yintercept = national_mean, color = "#D97706",
+             linetype = "dashed", linewidth = 0.8) +
+
+  # Dollar label at end of each bar
+  geom_text(aes(label = paste0("$", comma(round(Per_Capita)))),
+            hjust = -0.1, size = 2.5, fontface = "bold", color = "grey30") +
+
+  coord_flip(clip = "off") +
+
+  # Stacked vertically, same x scale
+  facet_wrap(~ Party_Label, ncol = 1, scales = "free_y") +
+
+  scale_fill_manual(values = c("Blue" = "#5A9BD5",
+                                "Red" = "#E06666"),
+                    guide = "none") +
+  scale_x_reordered() +
+  scale_y_continuous(labels = dollar_format(),
+                     limits = c(0, max(party_df$Per_Capita) * 1.15),
+                     expand = expansion(mult = c(0, 0.05))) +
+
+  labs(
+    title = "Was Funding Allocation Biased Towards Biden States\nas per 2020 Election Results?",
+    subtitle = paste0(
+      "Per capita federal funding by state  |  ",
+      "Dashed line = national mean ($", comma(round(national_mean)), ")"),
+    x = NULL,
+    y = "Federal Funding Per Capita ($)",
+    caption = "Source: Federal IIJA Funding & 2020 Election Data"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", size = 28,
+                                    color = "#1B2A4A"),
+    plot.subtitle    = element_text(size = 12, color = "gray40",
+                                    margin = margin(b = 15)),
+    plot.caption     = element_text(size = 9, color = "gray50"),
+    axis.text.y      = element_text(size = 8, face = "bold",
+                                    color = "#1B2A4A"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.text       = element_text(face = "bold", size = 14,
+                                    color = "#1B2A4A"),
+    panel.spacing    = unit(1.5, "lines"),
+    plot.margin      = margin(15, 50, 10, 10)
+  )
+```
+
+**Key Takeaway**: 
+
+- Federal IIJA funding does not appear to favor Blue states. Among states receiving above-average per capita funding, the top four are all Red states — suggesting that political alignment did not drive favorable treatment under   the Biden administration. Additionally, a larger proportion of Blue states fall below the national mean, and their shortfalls tend to be more consistently spread. 
+- By contrast, fewer Red states fall below the mean, and those that do tend to cluster closer to the national average. In short, the data suggests that population, infrastructure needs, and formula-based allocation — not party     affiliation — are the primary drivers of federal funding distribution.
+<br>
+<br>
+<br>
+
+```{r statistical-test, fig.width=8, fig.height=6, echo=FALSE, warning=FALSE, message=FALSE}
+
+test_df <- master %>%
+  mutate(Per_Capita = (Total_funding * 1e9) / Population)
+
+red_pc  <- test_df %>% filter(Party == "Red") %>% pull(Per_Capita)
+blue_pc <- test_df %>% filter(Party == "Blue") %>% pull(Per_Capita)
+
+# ── Run the test ──
+result <- wilcox.test(red_pc, blue_pc, exact = FALSE)
+
+# ── Summary ──
+stats <- test_df %>%
+  group_by(Party) %>%
+  summarise(
+    Mean   = mean(Per_Capita),
+    Median = median(Per_Capita),
+    Count  = n(),
+    .groups = "drop"
+  )
+
+p_val <- result$p.value
+verdict <- ifelse(p_val < 0.05, "Statistically Significant", 
+                  "Not Statistically Significant")
+
+# ── Chart ──
+ggplot(stats, aes(x = Party, y = Median, fill = Party)) +
+  geom_col(width = 0.5, alpha = 0.9) +
+  
+  geom_text(aes(label = paste0("Median: $", comma(round(Median)))),
+            vjust = -0.5, size = 5, fontface = "bold") +
+  
+  annotate("text", x = 1.5, y = max(stats$Median) * 1.5,
+           label = paste0("p-value: ", format(p_val, digits = 3),
+                          "\n", verdict),
+           size = 5, fontface = "bold", color = "#1B2A4A",
+           lineheight = 1.4) +
+  
+  scale_fill_manual(values = c("Blue" = "#2166AC",
+                                "Red" = "#B2182B"),
+                    guide = "none") +
+  scale_y_continuous(labels = dollar_format(),
+                     expand = expansion(mult = c(0, 0.2))) +
+  
+  labs(
+    title = "There is no Statistical Significance \nBetween Per Capita Funding Among\n Biden and Trump States",
+    subtitle = "Wilcoxon rank-sum test — per capita funding, red vs blue states",
+    x = NULL,
+    y = "Median Funding Per Person ($)",
+    caption = "A p-value below 0.05 means the difference is unlikely due to random chance."
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 26,
+                                color = "#1B2A4A", hjust = 0),
+    plot.subtitle = element_text(size = 11, color = "gray40",
+                                 hjust = 0.5, margin = margin(b = 20)),
+    plot.caption  = element_text(size = 12, color = "gray45"),
+    axis.text.x   = element_text(size = 14, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    plot.margin   = margin(15, 30, 10, 10)
+  )
+```
+
+
+
